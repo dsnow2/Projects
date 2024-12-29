@@ -1,0 +1,277 @@
+---
+title: "Technical Appendix"
+subtitle: "Sentiment Analysis by Topic: Amazon Product Review Summarization"
+author: "Shivang Thakor, Daymine Snow, Logan Balfantz, Lucie Ellis"
+date: "05/01/2024"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    number_sections: false
+colorlinks: true
+urlcolor: red
+fontsize: 12pt
+header-includes: \usepackage{color,soul}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r error=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(stringr)
+library(sentimentr) 
+library(tidytext)
+library(SnowballC)
+library(knitr)
+library(caret)
+library(topicmodels)
+```
+
+\newpage
+## Data Preparation
+
+Next, we read in our dataset...
+
+#### Read in our dataset
+```{r message=FALSE}
+reviews = read_csv("Updated_Amazondata.csv")
+
+reviews %>% glimpse()
+```
+
+... and clean it to get the components necessary for our analysis.  
+
+
+#### Clean data
+```{r}
+pattern = ".0 out of 5 stars"
+
+reviews = reviews %>%
+  # Create a review id
+  mutate(review_id = row_number()) %>% 
+  
+  # Clean the rating column
+  mutate(rating = as.integer(str_remove_all(rating, pattern))) %>%
+  
+  # Select only id, text, and rating
+  select(review_id, text, rating)
+
+reviews %>% glimpse()
+```
+
+While some shorter reviews only mention one product attribute, other reviews are longer and mention several product attributes. In an effort to ensure that we can calculate sentiment by individual product attribute (i.e., topic), we will tokenize the original reviews by sentence and assume that we are now dealing with one-sentence reviews that only mention one product attribute (or mostly focus on only one product attribute) per review. We perform this step because we believe that it’s better to misclassify a single sentence’s topic, which is far less likely to contain multiple topics, rather than misclassifying an entire original review.  
+
+
+
+#### Tokenize original reviews into new, one-sentence reviews
+```{r}
+new_reviews = reviews %>%
+  # Tokenize by sentence
+  get_sentences(text) #use get_sentences() over unnest_tokens() because it's better at sentence boundary disambiguation 
+
+new_reviews %>% glimpse()
+```
+
+\newpage
+## Sentiment Analysis
+
+Next, we conduct sentence-level sentiment analysis, which takes into account modifiers such as amplifiers and negators, using the Jockers-Rinker lexicon in the sentimentr package.
+
+#### Conduct sentence-level sentiment analysis
+```{r}
+new_reviews = new_reviews %>%
+  sentiment() %>%
+  
+  # Convert text to lowercase
+  mutate(text = tolower(text),
+  
+  # Create new review ids at the sentence level
+         new_review_id = row_number()) %>%
+  
+  # Select only the new review id, the review, and the sentiment score
+  select(new_review_id, text, sentiment)
+
+new_reviews %>% glimpse()
+```
+
+If we have another column that tells us which topic dominates on the sentence level, we can group by topic and calculate overall average sentiment for that topic, giving us our green, neutral, and orange topics from the reviews. To do so, we must build a topic model.
+
+To build an LDA model, so we must further tokenize our new reviews by word and clean them accordingly.
+
+#### Tokenize by word and clean accordingly
+```{r}
+new_reviews_word_level_clean = new_reviews %>%
+  # Use regex to rid reviews of numbers and special characters
+  mutate(text = str_replace_all(text, "[:digit:]", "")) %>%
+  
+  # Tokenize by word
+  unnest_tokens(output = word, input = text, token = "words") %>%
+  
+  # Remove stop words
+  anti_join(stop_words, by = "word") %>%
+  
+  # Stem words
+  mutate(word = wordStem(word))
+```
+
+\newpage
+## Topic Modeling
+
+We use the Latent Dirichlet Allocation (LDA) algorithm to determine the dominant topic of each review based on the words in the review.
+
+Some words like "stanley" and "cup" will not be useful for determining the topic of a review, so we will remove all words with a relatively low tf-idf score.
+
+#### Remove words with a relatively low tf-idf score
+```{r}
+# Calculate tf-idf and learn about the tf-idf score distribution so we can decide which words to cut
+new_reviews_word_level_clean %>%
+
+  # Calculate tf-idf
+  count(new_review_id, word) %>%
+  bind_tf_idf(word, new_review_id, n) %>%
+
+  # Calculate summary statistics for tf-idf
+  summarize(min = min(tf_idf),
+            pctl_25 = quantile(tf_idf, 0.25),
+            median = median(tf_idf),
+            mean = mean(tf_idf),
+            pctl_75 = quantile(tf_idf, 0.75),
+            max = max(tf_idf)) %>%
+  
+  # Organize results into a nice table
+  pivot_longer(cols = everything()) %>%
+  rename("tf-idf" = name, "value" = value) %>%
+  kable(digits = 2)
+
+# Remove words with a TF-IDF score lower than 0.49
+words_to_keep = new_reviews_word_level_clean %>%  
+  
+  # Calculate tf-idf
+  count(new_review_id, word) %>%
+  bind_tf_idf(word, new_review_id, n) %>%
+  
+  # Select only words to keep - above 25th percentile
+  group_by(word) %>%
+  summarize(mean_tf_idf = mean(tf_idf)) %>%
+  filter(mean_tf_idf >= 0.49) %>%
+  distinct(word)
+
+new_reviews_word_level_clean = new_reviews_word_level_clean %>%
+  inner_join(words_to_keep, by = "word")
+
+new_reviews_word_level_clean %>% glimpse()
+```
+
+We must pass the LDA a document-term matrix.
+
+#### Convert to document-term matrix (DTM)
+```{r}
+new_reviews_dtm = new_reviews_word_level_clean %>%
+  
+  # Convert to document-term matrix (DTM)
+  count(new_review_id, word) %>%
+  ungroup() %>% # unsure what this does completely
+  cast_dtm(new_review_id, word, n)
+
+# Preview DTM
+as.data.frame(as.matrix(new_reviews_dtm)) %>% head()
+```
+
+From there, we will run the LDA on our word-level tokenized dataset
+
+#### Run the LDA
+```{r}
+new_reviews_lda = new_reviews_dtm %>%
+  LDA(k = 5, method = "Gibbs", control = list(alpha = 0.1, delta = 0.1, seed = 123))
+```
+
+#### List the top ten terms per topic and decide on names
+```{r}
+new_reviews_topics = new_reviews_lda %>%
+  tidy(matrix = "beta") # beta represents per-topic word proportions
+
+new_reviews_topics %>%
+  mutate(topic = str_c("topic", topic)) %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>% # specify top 10 terms
+  ungroup() %>%
+  arrange(topic, -beta) %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(mapping = aes(x = term, y = beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered()
+```
+
+Here, we find topics
+Topic 1: Value
+Topic 2: Color/Size/Appearance
+Topic 3: Condition 
+Topic 4: Insulation/Coldness
+Topic 5: Quality
+
+Now, we can classify the dominant topic for each review.
+
+#### Classify the dominant topic for each review
+```{r}
+new_reviews_documents = new_reviews_lda %>%
+  tidy(matrix= "gamma") %>% # gamma represents the per-document topic proportions
+  mutate(new_review_id = as.integer(document)) %>%
+  mutate(topic = str_c("topic", topic)) %>%
+  pivot_wider(names_from = topic, values_from = gamma) %>%
+  mutate(max_value = pmax(topic1, topic2, topic3, topic4, topic5),
+         consensus_topic = case_when(
+           max_value == topic1 ~ "Value",
+           max_value == topic2 ~ "Color/Size/Appearance",
+           max_value == topic3 ~ "Condition",
+           max_value == topic4 ~ "Insulation/Coldness",
+           max_value == topic5 ~ "Quality")) %>%
+  select(new_review_id, consensus_topic)
+
+new_reviews_documents %>% glimpse()
+```
+
+Next, we can join the topic classifications back to the original reviews
+
+#### Join the topic classifications back to reviews
+```{r}
+new_reviews = new_reviews %>%
+  inner_join(new_reviews_documents, by = "new_review_id")
+
+new_reviews %>% glimpse()
+```
+
+Finally, we can calculate the mean sentiment for each topic by grouping the reviews by their dominant topic.
+
+#### Calculate the overall sentiment for each topic
+```{r}
+fill_color = new_reviews %>%
+  group_by(consensus_topic) %>%
+  summarize(mean_sentiment = mean(sentiment)) %>%
+  mutate(fill_color = ifelse(mean_sentiment > 0, "gray92", "tan1")) %>%
+  mutate(fill_color = ifelse(mean_sentiment > 0.045, "palegreen1", fill_color)) %>%
+  arrange(mean_sentiment, desc = TRUE)
+
+fill_color
+```
+
+... and finally, visualize the variation in sentiment by topic.
+
+#### Visualize the variation in sentiment by topic
+```{r}
+new_reviews = new_reviews %>%
+  inner_join(fill_color %>% select(consensus_topic, fill_color), by = "consensus_topic")
+
+# Make a box plot with a green fill if the average sentiment per consensus group is positive and an orange fill if the average sentiment per consensus group is negative and arrange from highest to lowest sentiment
+new_reviews %>%
+  ggplot(mapping = aes(x = consensus_topic, y = sentiment, fill = fill_color)) +
+  geom_boxplot() +
+  scale_fill_identity() + 
+  labs(title = "Sentiment Across Stanley Cup Product Attributes",
+       x = "Topic",
+       y = "Polarity") +
+  theme_minimal()
+```
