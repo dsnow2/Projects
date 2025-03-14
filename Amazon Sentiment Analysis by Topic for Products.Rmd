@@ -1,7 +1,7 @@
 ---
 title: "Technical Appendix"
 subtitle: "Sentiment Analysis by Topic: Amazon Product Review Summarization"
-author: "Shivang Thakor, Daymine Snow, Logan Balfantz, Lucie Ellis"
+author: "Daymine Snow"
 date: "05/01/2024"
 output:
   html_document:
