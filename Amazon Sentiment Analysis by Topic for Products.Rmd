@@ -206,7 +206,7 @@ new_reviews_topics %>%
   scale_x_reordered()
 ```
 
-Here, we find topics
+Here, I found topics
 Topic 1: Value
 Topic 2: Color/Size/Appearance
 Topic 3: Condition 
