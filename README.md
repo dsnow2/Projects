@@ -3,7 +3,7 @@
 
 <p align="left"> <img src="https://komarev.com/ghpvc/?username=dsnow2&label=Profile%20views&color=0e75b6&style=flat" alt="dsnow2" /> </p>
 
-- 📫 How to reach me **dsnow2@nd.edu**
+- 📫 How to reach me **daysnow2003@gmail.com**
 
 - 📄 Know about my experiences [https://drive.google.com/file/d/10PGC5wBQ-lyKh3pUM8w6WF2KRILiduBn/view?usp=drive_link](https://drive.google.com/file/d/10PGC5wBQ-lyKh3pUM8w6WF2KRILiduBn/view?usp=drive_link)
 
