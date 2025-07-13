@@ -1,0 +1,976 @@
+---
+title: "Sports_Analytics_Final_Project"
+author: "Jay Vrins"
+date: "2025-02-13"
+output: html_document
+---
+
+# Loading Dataset
+```{r setup, include=FALSE,warning=FALSE,message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,warning=FALSE,message=FALSE}
+
+# You can install using the pacman package using the following code:
+if (!requireNamespace('pacman', quietly = TRUE)){
+  install.packages('pacman')
+}
+pacman::p_load_current_gh("sportsdataverse/hoopR", dependencies = TRUE, update = TRUE)
+
+```
+
+```{r,warning=FALSE,message=FALSE}
+nba_box_data<- load_nba_team_box(2002:2024)
+```
+
+# Loading Packages 
+```{r,warning=FALSE}
+
+library(hoopR)
+library(tidyverse) # Load tidyverse
+library(ggplot2) # Load ggplot2
+library(ggdark) # Load ggdark
+library(ggimage) # Load ggimage
+library(GGally) # Load GGally
+library(ggrepel) # Load ggrepel
+library(readxl)
+library(ggridges) # Load ggridges
+library(rsvg)
+library(patchwork) # Library for side-by-side plots
+library(future)
+library(reshape)
+library(gganimate) # Load gganimate
+library(cluster)    # clustering algorithms
+library(factoextra)
+library(dendextend)
+library(teamcolors)
+
+```
+
+```{r}
+summary(nba_box_data)
+```
+
+
+# Cleaning up the data 
+
+```{r,warning=FALSE,message=FALSE}
+
+# Filtering for just playoff games which is season_type==3
+
+play_win <-nba_box_data[nba_box_data$season_type == 3,]
+
+play_win <- play_win %>% mutate(home_team = ifelse(play_win$team_home_away == "home", team_display_name, opponent_team_display_name), away_team = ifelse(play_win$team_home_away == "away", team_display_name, opponent_team_display_name), home_team_score = ifelse(play_win$team_home_away == "home", team_score, opponent_team_score), away_team_score = ifelse(play_win$team_home_away == "away", team_score, opponent_team_score)) 
+
+# Select relevant columns
+data2 <- play_win %>%
+  select(game_id,team_id, home_team, away_team,home_team_score, away_team_score,season_type, team_score, assists, fast_break_points, field_goal_pct, 
+         offensive_rebounds, points_in_paint, three_point_field_goal_pct, three_point_field_goals_attempted, free_throws_attempted, team_winner,season)
+
+# Ensure that there are exactly two teams per game
+data2 <- data2 %>%
+  group_by(game_id) %>%
+  mutate(row_id = row_number()) %>%  # Create row_id to differentiate teams in the same game
+  filter(n() == 2) %>%  # Ensure each game has exactly two teams
+  ungroup()
+
+# Pivot the dataset wider so that each game has one row with both teams' stats
+wide_data <- data2 %>%
+  pivot_wider(names_from = row_id, values_from = c(team_id, team_score, home_team, away_team,home_team_score, away_team_score, assists, 
+                                                   fast_break_points, field_goal_pct, 
+                                                   offensive_rebounds, points_in_paint, 
+                                                   three_point_field_goal_pct,three_point_field_goals_attempted, free_throws_attempted, team_winner, season),
+              names_glue = "{.value}_{row_id}")
+
+# Rename columns for clarity
+wide_data <- wide_data %>%
+  rename_with(~ gsub("_1$", "", .), ends_with("_1")) %>%  # Rename first team's columns
+  rename_with(~ gsub("_2$", "_allowed", .), ends_with("_2"))  # Rename second team's columns
+
+# Necessary for counting playoffs wins and final wins 
+game_res <- wide_data %>% select(game_id,home_team, away_team, home_team_score, away_team_score,season)
+
+# Create two rows per game, flipping the teams
+final_data <- bind_rows(
+  wide_data %>% select(game_id, team_id, team_score, assists, fast_break_points, field_goal_pct, 
+                       offensive_rebounds, points_in_paint, three_point_field_goal_pct,three_point_field_goals_attempted, free_throws_attempted, team_winner,
+                       team_score_allowed, assists_allowed, fast_break_points_allowed, 
+                       field_goal_pct_allowed, offensive_rebounds_allowed, points_in_paint_allowed, 
+                       three_point_field_goal_pct_allowed, three_point_field_goals_attempted_allowed, free_throws_attempted_allowed, team_winner_allowed),
+  wide_data %>% select(game_id, team_id = team_id_allowed, team_score = team_score_allowed, 
+                       assists = assists_allowed, fast_break_points = fast_break_points_allowed, 
+                       field_goal_pct = field_goal_pct_allowed, offensive_rebounds = offensive_rebounds_allowed, 
+                       points_in_paint = points_in_paint_allowed, 
+                       three_point_field_goal_pct = three_point_field_goal_pct_allowed,three_point_field_goals_attempted = three_point_field_goals_attempted_allowed, free_throws_attempted = free_throws_attempted_allowed, 
+                       team_winner = team_winner_allowed, 
+                       team_score_allowed = team_score, assists_allowed = assists, 
+                       fast_break_points_allowed = fast_break_points, field_goal_pct_allowed = field_goal_pct, 
+                       offensive_rebounds_allowed = offensive_rebounds, points_in_paint_allowed = points_in_paint, 
+                       three_point_field_goal_pct_allowed = three_point_field_goal_pct, team_winner_allowed = team_winner)
+)
+
+# Append additional columns from nba_box_data
+final_data <- final_data %>%
+  left_join(nba_box_data %>% select(game_id, team_id, season,season_type, game_date, team_display_name, 
+                                team_logo, team_home_away, team_winner, blocks, 
+                                defensive_rebounds, fouls, steals, total_turnovers),
+            by = c("game_id", "team_id"))
+
+# Load the dataset
+nba_data <- read_csv("nba_box_data.csv")
+
+# Select relevant columns
+data2 <- nba_data %>%
+  select(game_id, team_id, team_score, assists, fast_break_points, field_goal_pct, 
+         offensive_rebounds, points_in_paint, three_point_field_goal_pct,three_point_field_goals_attempted, free_throws_attempted, team_winner)
+
+# Ensure that there are exactly two teams per game
+data2 <- data2 %>%
+  group_by(game_id) %>%
+  mutate(row_id = row_number()) %>%  # Create row_id to differentiate teams in the same game
+  filter(n() == 2) %>%  # Ensure each game has exactly two teams
+  ungroup()
+
+# Pivot the dataset wider so that each game has one row with both teams' stats
+wide_data <- data2 %>%
+  pivot_wider(names_from = row_id, values_from = c(team_id, team_score, assists, 
+                                                   fast_break_points, field_goal_pct, 
+                                                   offensive_rebounds, points_in_paint, 
+                                                   three_point_field_goal_pct,three_point_field_goals_attempted, free_throws_attempted, team_winner),
+              names_glue = "{.value}_{row_id}")
+
+# Rename columns for clarity
+wide_data <- wide_data %>%
+  rename_with(~ gsub("_1$", "", .), ends_with("_1")) %>%  # Rename first team's columns
+  rename_with(~ gsub("_2$", "_allowed", .), ends_with("_2"))  # Rename second team's columns
+
+# Create two rows per game, flipping the teams
+final_data <- bind_rows(
+  wide_data %>% select(game_id, team_id, team_score, assists, fast_break_points, field_goal_pct, 
+                       offensive_rebounds, points_in_paint, three_point_field_goal_pct,three_point_field_goals_attempted, free_throws_attempted, team_winner,
+                       team_score_allowed, assists_allowed, fast_break_points_allowed, 
+                       field_goal_pct_allowed, offensive_rebounds_allowed, points_in_paint_allowed, 
+                       three_point_field_goal_pct_allowed, three_point_field_goals_attempted_allowed, free_throws_attempted_allowed, team_winner_allowed),
+  wide_data %>% select(game_id, team_id = team_id_allowed, team_score = team_score_allowed, 
+                       assists = assists_allowed, fast_break_points = fast_break_points_allowed, 
+                       field_goal_pct = field_goal_pct_allowed, offensive_rebounds = offensive_rebounds_allowed, 
+                       points_in_paint = points_in_paint_allowed, 
+                       three_point_field_goal_pct = three_point_field_goal_pct_allowed,three_point_field_goals_attempted = three_point_field_goals_attempted_allowed, free_throws_attempted = free_throws_attempted_allowed, 
+                       team_winner = team_winner_allowed, 
+                       team_score_allowed = team_score, assists_allowed = assists, 
+                       fast_break_points_allowed = fast_break_points, field_goal_pct_allowed = field_goal_pct, 
+                       offensive_rebounds_allowed = offensive_rebounds, points_in_paint_allowed = points_in_paint, 
+                       three_point_field_goal_pct_allowed = three_point_field_goal_pct, team_winner_allowed = team_winner)
+)
+
+# Append additional columns from nba_box_data
+final_data <- final_data %>%
+  left_join(nba_data %>% select(game_id, team_id, season,season_type, game_date, team_display_name, 
+                                team_logo, team_home_away, blocks, 
+                                defensive_rebounds, fouls, steals, total_turnovers),
+            by = c("game_id", "team_id"))
+```
+
+### Reordering columns for easy visuals 
+
+```{r}
+# Reorder columns to match nba_box_data
+final_data <- final_data %>%
+  select(game_id, season,season_type, game_date, team_id, team_display_name, team_logo, 
+         team_home_away, team_winner, team_score, assists, fast_break_points, field_goal_pct, 
+         offensive_rebounds, points_in_paint, three_point_field_goal_pct,three_point_field_goals_attempted, free_throws_attempted, blocks, 
+         defensive_rebounds, fouls, steals, total_turnovers, 
+         team_score_allowed, assists_allowed, fast_break_points_allowed, field_goal_pct_allowed, 
+         offensive_rebounds_allowed, points_in_paint_allowed, three_point_field_goal_pct_allowed)
+
+# Order rows by game_id and then by season (from recent to past seasons)
+final_data <- final_data %>%
+  arrange(desc(game_date), game_id)
+
+```
+
+```{r}
+final_data <- final_data %>%
+  mutate(team_winner = ifelse(team_winner == TRUE, 2, 1))
+```
+
+
+```{r}
+# Create vector to store winning team
+win_team <- rep(NA, nrow(game_res))
+# Assign winning team as home team if home team scored more points
+win_team[game_res$home_team_score > game_res$away_team_score] <- game_res$home_team[game_res$home_team_score > game_res$away_team_score]
+# Assign winning team as away team if away team scored more points
+win_team[game_res$away_team_score > game_res$home_team_score] <- game_res$away_team[game_res$away_team_score > game_res$home_team_score]
+# Add wining team to game results data frame
+game_res$win_team <- win_team
+```
+
+```{r}
+# Extract playoff teams
+playoff_teams <- unique(play_win[play_win$season_type == 3 & # Select post season data
+                              !is.na(play_win$team_display_name) & # Ignore NA
+                              play_win$team_display_name != "", # Ignore blank teams
+                            c("team_display_name", "season")]) # Get unique combinations of team and season
+```
+
+### Creating empty vector dataset for comparing clusters 
+
+```{r}
+# Create vector to store winning team
+team_wins <- rep(NA, nrow(playoff_teams))
+# Super Bowl Wins
+final_wins <- rep(NA, nrow(playoff_teams))
+# For each team
+for(i in 1:nrow(playoff_teams)){
+  # Calculate the number of wins that team had
+  team_wins[i] <- sum(game_res$win_team == playoff_teams$team_display_name[i] &
+                        game_res$season == playoff_teams$season[i], na.rm = T)}
+
+# Create team data frame with team names and wins
+team_db <- cbind.data.frame(playoff_teams, team_wins)
+  # Calculate if they won the Final
+team_db <- team_db %>% mutate(final_win = ifelse(season == 2002,ifelse(team_wins==15,1,0),ifelse(team_wins==16,1,0)))
+
+team_db <- team_db[team_db$season != 2018, ]
+```
+
+### Loading in team logos
+```{r}
+t_logos <- unique(na.omit(final_data[, c( "team_display_name", "team_logo")]))
+```
+
+```{r}
+#Filter to only playoffs
+playoff_df = final_data[final_data$season_type == 3,]
+
+#Converting Fast Break Points into actual number
+playoff_df$fast_break_points = as.integer(playoff_df$fast_break_points)
+playoff_df$net_eff = playoff_df$team_score-playoff_df$team_score_allowed
+```
+
+
+```{r}
+
+#Aggregating 
+agg_playoff <- playoff_df %>% group_by(season,team_display_name) %>% summarise(off_eff = mean(team_score),
+                                                        def_eff = mean(team_score_allowed),
+                                                        net_eff = mean(net_eff),
+                                                        avg_assists=mean(assists), 
+                                                        avg_fast_break_points=mean(fast_break_points),
+                                                        avg_field_goal_pct=mean(field_goal_pct),
+                                                        avg_three_point_pct = mean(three_point_field_goal_pct),
+                                                        avg_steals = mean(steals),
+                                                        avg_blocks = mean(blocks),
+                                                        avg_foul = mean(fouls),
+                                                        avg_offensive_rebounds=mean(offensive_rebounds),
+                                                        avg_defensive_rebounds=mean(defensive_rebounds),
+                                                        avg_turnovers=mean(total_turnovers),
+                                                        avg_assists_allowed=mean(assists_allowed),
+                                                        avg_fast_break_points_allowed=mean(fast_break_points_allowed),
+                                                        avg_field_goal_pct_allowed=mean(field_goal_pct_allowed),
+                                                        avg_offensive_rebounds_allowed=mean(offensive_rebounds_allowed),
+                                                        avg_three_point_field_goal_pct_allowed=mean(three_point_field_goal_pct_allowed))
+
+
+league_agg <- playoff_df %>% group_by(season) %>% summarise(off_eff = mean(team_score),
+                                                        def_eff = mean(team_score_allowed),
+                                                        net_eff = mean(net_eff),
+                                                        avg_assists=mean(assists), 
+                                                        avg_fast_break_points=mean(fast_break_points),
+                                                        avg_field_goal_pct=mean(field_goal_pct),
+                                                        avg_three_point_pct = mean(three_point_field_goal_pct), avg_three_point_field_goals_attempted = mean(three_point_field_goals_attempted), avg_free_throws_attempted = mean(free_throws_attempted),
+                                                        avg_steals = mean(steals),
+                                                        avg_blocks = mean(blocks),
+                                                        avg_foul = mean(fouls),
+                                                        avg_offensive_rebounds=mean(offensive_rebounds),
+                                                        avg_defensive_rebounds=mean(defensive_rebounds),
+                                                        avg_turnovers=mean(total_turnovers),
+                                                        avg_assists_allowed=mean(assists_allowed),
+                                                        avg_fast_break_points_allowed=mean(fast_break_points_allowed),
+                                                        avg_field_goal_pct_allowed=mean(field_goal_pct_allowed),
+                                                        avg_offensive_rebounds_allowed=mean(offensive_rebounds_allowed),
+                                                        avg_three_point_field_goal_pct_allowed=mean(three_point_field_goal_pct_allowed))
+                                   
+```
+
+```{r}
+t3<- teamcolors
+post_viz<- merge(agg_playoff ,t_logos, by = 'team_display_name')
+
+```
+
+
+```{r}
+g_1 = ggplot(data = post_viz ,
+                 aes(x = off_eff,
+                     y = def_eff)) + 
+    geom_point(alpha = 0.3) + # Set geom_point for scatter
+ geom_image(aes(image = team_logo), size = 0.05, asp = 16 / 9) + # Use geom_image to use logos
+  dark_theme_bw() + # Set dark theme
+   theme(legend.position="none", # Turn off legend
+     panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank(),
+    aspect.ratio = 9 / 16,
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold")) +  # Remove grid
+    labs(x= "Offensive Effeciency Per Game", y ="Defensive Effeciency Per Game", # Set labels
+       title = "Offensive Effeciency v Defensive Effeciency",
+       subtitle = "NBA Playoff Teams - {closest_state}") +
+  transition_states(as.numeric(season),
+                    transition_length = 0,
+                    state_length = 1)
+
+```
+
+
+```{r}
+#animate(g_1, fps = 0.5)
+```
+
+```{r}
+#anim_save("nba.gif", g)
+```
+
+
+```{r}
+g_2 <- ggplot(post_viz, # Set data set
+               aes(x = off_eff,
+                     y = def_eff)) + 
+  geom_point(alpha = 0.3) + # Set geom_point for scatter
+ geom_image(data = post_viz[post_viz$season == 2024,], aes(image = team_logo), size = 0.05, asp = 16 / 9) + # Use geom_image to use logos
+  dark_theme_bw() + # Set dark theme
+   theme(legend.position="none", # Turn off legend
+     panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank(),
+    aspect.ratio = 9 / 16,
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold")) +  # Remove grid
+    labs(x= "Offensive Effeciency Per Game", y ="Defensive Effeciency Per Game", # Set labels
+       title = "Offensive Effeciency v Defensive Effeciency",
+       subtitle = "NBA Playoff Teams 2024") 
+g_2
+
+```
+
+
+```{r}
+g_3 <- ggplot(post_viz, # Set data set
+               aes(x = off_eff,
+                     y = def_eff)) + 
+  geom_point(alpha = 0.3) + # Set geom_point for scatter
+ geom_image(data = post_viz[post_viz$season == 2002,], aes(image = team_logo), size = 0.05, asp = 16 / 9) + # Use geom_image to use logos
+  dark_theme_bw() + # Set dark theme
+   theme(legend.position="none", # Turn off legend
+     panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank(),
+    aspect.ratio = 9 / 16,
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold")) +  # Remove grid
+    labs(x= "Offensive Effeciency Per Game", y ="Defensive Effeciency Per Game", # Set labels
+       title = "Offensive Effeciency v Defensive Effeciency",
+       subtitle = "NBA Playoff Teams 2002") 
+g_3
+
+```
+
+```{r}
+g_4 <- ggplot(post_viz, # Set data set
+               aes(x = off_eff,
+                     y = def_eff)) + 
+  geom_point(alpha = 0.3) + # Set geom_point for scatter
+ geom_image(data = post_viz[post_viz$season == 2018,], aes(image = team_logo), size = 0.05, asp = 16 / 9) + # Use geom_image to use logos
+  dark_theme_bw() + # Set dark theme
+   theme(legend.position="none", # Turn off legend
+     panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank(),
+    aspect.ratio = 9 / 16,
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold")) +  # Remove grid
+    labs(x= "Offensive Effeciency Per Game", y ="Defensive Effeciency Per Game", # Set labels
+       title = "Offensive Effeciency v Defensive Effeciency",
+       subtitle = "NBA Playoff Teams 2018") 
+g_4
+
+```
+
+```{r}
+data_long <- league_agg %>%
+  pivot_longer(cols = c(avg_three_point_field_goals_attempted, avg_free_throws_attempted),
+               names_to = "Attempt_Type",
+               values_to = "Attempts")
+
+ggplot(data_long, aes(x = season, y = Attempts, color = Attempt_Type, group = Attempt_Type)) +
+  geom_line(size = 1.2) +   # Add lines
+  geom_point(size = 2) +    # Optional: Add points
+  labs(title = "Three-Point Attempts vs Free Throw Attempts Over Time",
+       x = "Year",
+       y = "Number of Attempts",
+       color = "Attempt Type") +
+  theme_minimal() +
+  dark_theme_bw()
+```
+
+
+### Clustering
+
+```{r}
+clustering_columns<- c("off_eff",
+                        "def_eff",
+                        "net_eff",
+                        "avg_assists",
+                        "avg_blocks",
+                        "avg_steals",
+                        "avg_fast_break_points", 
+                        "avg_field_goal_pct", 
+                        "avg_three_point_pct",
+                        "avg_offensive_rebounds",
+                        "avg_defensive_rebounds",
+                        "avg_turnovers",
+                        "avg_assists_allowed",
+                        "avg_fast_break_points_allowed",
+                        "avg_field_goal_pct_allowed",
+                        "avg_offensive_rebounds_allowed",
+                        "avg_three_point_field_goal_pct_allowed")
+
+
+# removed "avg_foul",
+```
+
+
+```{r}
+# Removing Season 2018 as it appear to be an outleir year that is skewing results 
+agg_playoff <- as.data.frame(agg_playoff[agg_playoff$season != 2018, ]) 
+
+# Extract just columns for clustering
+clus_data <- agg_playoff[,clustering_columns]
+
+# Set row names on data set
+rownames(clus_data) <- paste(agg_playoff$team_display_name, agg_playoff$season, sep = "-")
+
+```
+
+```{r}
+# Scale data
+sdata <- scale(clus_data)
+
+# Calculate distances between points
+dist_mat <- dist(sdata, # Set data set
+                 method = "euclidean") # Set distance measure to use
+
+# Run hierarchical clustering
+hc <- hclust(dist_mat, # Set distance matrix to use 
+              method = "ward.D2" ) # Set linkage measure to use
+```
+
+
+```{r}
+# Create dendrogram
+dend <- as.dendrogram(hc)
+# order it the closest we can to the order of the observations:
+dend <- rotate(dend, 1:nrow(sdata))
+
+# Color the branches based on the clusters:
+dend <- color_branches(dend, k=6) 
+
+# We hang the dendrogram a bit:
+dend <- hang.dendrogram(dend,hang_height=0.1)
+# reduce the size of the labels:
+dend <- set(dend, "labels_cex", 0.55)
+# And plot:
+par(mar = c(3,3,3,7))
+plot(dend, 
+     main = "Clustered NBA Post Season Teams",
+     horiz =  TRUE,  nodePar = list(cex = .007))
+
+```
+```{r}
+set.seed(12345) # Set seed for reproducibility
+fit <- kmeans(x = sdata, # Set data as explanatory variables 
+                centers = 6,  # Set number of clusters
+                nstart = 25, # Set number of starts
+                iter.max = 100 ) # Set maximum number of iterations to use
+
+```
+
+```{r}
+# Extract clusters
+clusters <- fit$cluster
+# Extract centers
+centers <- fit$centers
+# Check samples per cluster
+summary(as.factor(clusters))
+
+```
+
+```{r}
+# Create cluster vector
+cluster <- c(1:6)
+# Join cluster vector and centers
+center_df <- data.frame(cluster, centers)
+
+# Reshape the data
+center_reshape <- gather(center_df, features, values, off_eff:avg_three_point_field_goal_pct_allowed)
+# View result
+head(center_reshape)
+
+
+
+```
+
+
+```{r}
+# Re-level factors
+center_reshape$features <- factor(center_reshape$features, levels = c("off_eff",
+                        "def_eff",
+                        "net_eff",
+                        "avg_assists",
+                        "avg_blocks",
+                        "avg_steals",
+                        "avg_fast_break_points", 
+                        "avg_field_goal_pct", 
+                        "avg_three_point_pct",
+                        "avg_offensive_rebounds",
+                        "avg_defensive_rebounds",
+                        "avg_turnovers",
+                        "avg_assists_allowed",
+                        "avg_fast_break_points_allowed",
+                        "avg_field_goal_pct_allowed",
+                        "avg_offensive_rebounds_allowed",
+                        "avg_three_point_field_goal_pct_allowed"))
+
+```
+
+```{r}
+g_heat_2 <- ggplot(data = center_reshape, # Set data set
+                   aes(x = features, y = cluster, fill = values)) + # Set aesthetics
+  scale_y_continuous(breaks = seq(1, 8, by = 1)) + # Set y axis breaks
+  geom_tile() + # Set geom tile for heat map
+  coord_equal() +  # Set coord equal 
+  theme_bw() + # Set theme
+  scale_fill_gradient2(low = "blue", # Choose low color
+                       mid = "white", # Choose mid color
+                       high = "red", # Choose high color
+                       midpoint =0, # Choose mid point
+                       space = "Lab", 
+                       na.value ="grey", # Choose NA value
+                       guide = "colourbar", # Set color bar
+                       aesthetics = "fill") + # Select aesthetics to apply
+  coord_flip() # Rotate plot
+
+```
+
+```{r}
+# Generate plot
+g_heat_2
+
+```
+
+# Cluster Analysis
+```{r}
+team_db$clusters <- clusters
+```
+```{r}
+
+# Calculate total wins per team within each cluster and sort by total wins (highest first within each cluster)
+top_10_teams_per_cluster <- team_db %>%
+  group_by(clusters, team_display_name,season) %>%
+  summarize(total_wins = sum(team_wins, na.rm = TRUE), .groups = "drop") %>%
+  arrange(clusters, desc(total_wins)) %>%  # Sort by cluster, then by total wins (highest first)
+  group_by(clusters) %>%
+  slice_head(n = 10) %>%  # Select top 10 teams for each cluster
+  ungroup()
+
+# Display the result
+print(top_10_teams_per_cluster)
+
+```
+```{r}
+
+# Count the total number of teams per season
+season_totals <- team_db %>%
+  group_by(season) %>%
+  summarise(total_teams = n(), .groups = "drop")
+
+# Identify the most and second most common clusters for each season
+cluster_counts <- team_db %>%
+  group_by(season, clusters) %>%
+  summarise(cluster_count = n(), .groups = "drop") %>%
+  arrange(season, desc(cluster_count)) %>%
+  group_by(season) %>%
+  mutate(rank = row_number()) %>%  # Rank clusters within each season
+  ungroup()
+
+# Extract most common and second most common clusters
+most_common_cluster <- cluster_counts %>%
+  filter(rank == 1) %>%
+  select(season, most_common_cluster = clusters, most_common_count = cluster_count) %>%
+  left_join(season_totals, by = "season") %>%
+  mutate(most_common_percentage = (most_common_count / total_teams) * 100)
+
+second_most_common_cluster <- cluster_counts %>%
+  filter(rank == 2) %>%
+  select(season, second_most_common_cluster = clusters, second_most_common_count = cluster_count)
+
+# Identify the cluster of the championship-winning team for each season
+champion_cluster <- team_db %>%
+  filter(final_win == 1) %>%
+  select(season, championship_cluster = clusters)
+
+# Combine all results
+final_cluster_summary <- most_common_cluster %>%
+  left_join(second_most_common_cluster, by = "season") %>%
+  left_join(champion_cluster, by = "season")
+
+# Display the results
+final_cluster_summary
+
+
+
+```
+
+```{r}
+#Champions in each Cluster 
+
+# Filter teams that have won a championship (final_win == 1) and group by cluster
+championship_teams_by_cluster <- team_db %>%
+  filter(final_win == 1) %>%  # Only keep teams that won at least 1 championship
+  select(clusters, team_display_name, season) %>%  # Keep relevant columns
+  arrange(clusters, season)  # Sort for readability
+
+# Display the result
+print(championship_teams_by_cluster)
+
+
+```
+
+
+```{r}
+team_db_logos <- team_db %>%
+  left_join(t_logos, by = "team_display_name")
+
+```
+
+```{r}
+team_db_logos_with_eff <- team_db_logos %>%
+  left_join(
+    agg_playoff %>% 
+      select(team_display_name, season, off_eff, def_eff) %>% 
+      distinct(),  # ensure uniqueness
+    by = c("team_display_name", "season")
+  )
+```
+
+```{r}
+
+# Filter for championship-winning teams
+filtered_teams <- team_db_logos_with_eff %>%
+  filter(team_wins>=12, !is.na(team_logo))  # Ensure logos exist
+
+# Create the scatter plot
+ggplot(filtered_teams, aes(x = off_eff, y = def_eff)) +
+  geom_image(aes(image = team_logo), size = 0.06) +  # Use team logos instead of dots
+  geom_text_repel(aes(label = season), size = 3.5, color = "white", 
+                  box.padding = 0.4, max.overlaps = Inf) +  # Label only the season, prevent overlap
+  theme_minimal() +
+  labs(
+    title = "Offensive vs Defensive Efficiency (Finals Teams)",
+    x = "Offensive Efficiency (off_eff)",
+    y = "Defensive Efficiency (def_eff)"
+  ) +
+  theme(
+    panel.background = element_rect(fill = "black"),  # Black background
+    plot.background = element_rect(fill = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_text(color = "white"),   # White axis labels
+    axis.title = element_text(color = "white"),
+    plot.title = element_text(color = "white", face = "bold", hjust = 0.5)
+  )
+
+
+```
+```{r}
+
+# Filter for championship-winning teams
+filtered_teams <- team_db_logos_with_eff %>%
+  filter(final_win==1, !is.na(team_logo))  # Ensure logos exist
+
+# Create the scatter plot
+ggplot(filtered_teams, aes(x = off_eff, y = def_eff)) +
+  geom_image(aes(image = team_logo), size = 0.06) +  # Use team logos instead of dots
+  geom_text_repel(aes(label = season), size = 3.5, color = "white", 
+                  box.padding = 0.4, max.overlaps = Inf) +  # Label only the season, prevent overlap
+  theme_minimal() +
+  labs(
+    title = "Offensive vs Defensive Efficiency (Champions)",
+    x = "Offensive Efficiency (off_eff)",
+    y = "Defensive Efficiency (def_eff)"
+  ) +
+  theme(
+    panel.background = element_rect(fill = "black"),  # Black background
+    plot.background = element_rect(fill = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_text(color = "white"),   # White axis labels
+    axis.title = element_text(color = "white"),
+    plot.title = element_text(color = "white", face = "bold", hjust = 0.5)
+  )
+
+
+
+```
+
+```{r}
+# Step 1: Aggregate total wins per team in each cluster
+df_cluster_wins <- team_db_logos_with_eff %>%
+  group_by(clusters, team_display_name, team_logo) %>%
+  summarize(total_wins = sum(team_wins, na.rm = TRUE), .groups = "drop") %>%
+  ungroup()
+
+# Step 2: Find the **top 3 teams per cluster** based on wins
+top_teams_per_cluster <- df_cluster_wins %>%
+  group_by(clusters) %>%
+  arrange(desc(total_wins)) %>%  # Sort teams by total wins within each cluster
+  slice_head(n = 3) %>%  # Keep only the top 3 teams
+  ungroup()
+
+# Step 3: Aggregate total wins per cluster (this should have **one row per cluster**)
+df_cluster_total_wins <- df_cluster_wins %>%
+  group_by(clusters) %>%
+  summarize(total_wins = sum(total_wins, na.rm = TRUE), .groups = "drop") %>%
+  ungroup()
+
+# Step 4: Create the bar chart (one row per cluster) 
+ggplot(df_cluster_total_wins, aes(x = factor(clusters), y = total_wins)) +
+  geom_col(fill = "lightblue", color = "white", width = 0.6) +  # All bars the same color
+  
+  # Step 5: Add team logos (multiple rows per cluster)
+  geom_image(data = top_teams_per_cluster, aes(image = team_logo), 
+             size = 0.08, by = "width", 
+             nudge_y = rep(c(10, 65, 120), length.out = nrow(top_teams_per_cluster))) +  # Stack top 3 logos
+             
+  theme_minimal() +
+  labs(
+    title = "Total Team Wins by Cluster",
+    x = "Cluster",
+    y = "Total Wins"
+  ) +
+  theme(
+    legend.position = "none",      # Remove legend
+    panel.background = element_rect(fill = "black"), # Set background to black
+    plot.background = element_rect(fill = "black"),  # Set plot background to black
+    panel.grid.major = element_blank(),              # Remove major grid lines
+    panel.grid.minor = element_blank(),              # Remove minor grid lines
+    axis.text = element_text(color = "white"),       # Make axis text white
+    axis.title = element_text(color = "white"),      # Make axis labels white
+    plot.title = element_text(color = "white", face = "bold", hjust = 0.5)  # Make title white and centered
+  )
+
+```
+
+```{r}
+# Step 1: Aggregate **total final wins per team in each cluster**
+df_cluster_final_wins <- team_db_logos_with_eff %>%
+  group_by(clusters, team_display_name) %>%
+  summarize(total_final_wins = sum(final_win, na.rm = TRUE), .groups = "drop") %>%
+  ungroup()
+
+# Step 2: Aggregate total championship wins per cluster (one row per cluster)
+df_cluster_total_finals <- df_cluster_final_wins %>%
+  group_by(clusters) %>%
+  summarize(total_final_wins = sum(total_final_wins, na.rm = TRUE), .groups = "drop") %>%
+  ungroup()
+
+# Step 3: Create the bar chart (one row per cluster)
+ggplot(df_cluster_total_finals, aes(x = factor(clusters), y = total_final_wins)) +
+  geom_col(fill = "lightblue", color = "white", width = 0.6) +  # All bars in light blue with a white outline
+  
+  theme_minimal() +
+  labs(
+    title = "Total Championship Wins by Cluster",
+    x = "Cluster",
+    y = "Total Final Wins"
+  ) +
+  theme(
+    legend.position = "none",      # Remove legend
+    panel.background = element_rect(fill = "black"), # Set background to black
+    plot.background = element_rect(fill = "black"),  # Set plot background to black
+    panel.grid.major = element_blank(),              # Remove major grid lines
+    panel.grid.minor = element_blank(),              # Remove minor grid lines
+    axis.text = element_text(color = "white"),       # Make axis text white
+    axis.title = element_text(color = "white"),      # Make axis labels white
+    plot.title = element_text(color = "white", face = "bold", hjust = 0.5)  # Make title white and centered
+  )
+
+
+```
+```{r}
+# Ensure we use actual unique clusters
+unique_clusters <- sort(unique(team_db$clusters))
+
+clus_wins <- championships <- rep(NA, length(unique_clusters))
+
+for(i in seq_along(unique_clusters)){
+  cluster_num <- unique_clusters[i]  # Get actual cluster number
+  clus_wins[i] <- mean(team_db$team_wins[which(team_db$clusters == cluster_num)], na.rm = TRUE)
+  championships[i] <- sum(team_db$final_win[which(team_db$clusters == cluster_num)], na.rm = TRUE)
+}
+
+print(clus_wins)
+print(championships)
+
+```
+
+```{r}
+# Create empty vectors to store results
+home_cluster <- away_cluster <- win_cluster <- rep(NA, nrow(game_res))
+
+# For each game
+for(i in 1:nrow(game_res)){ 
+  # Identify the home team cluster
+  match_index <- which(team_db$team_display_name == game_res$home_team[i] & team_db$season == game_res$season[i])
+  home_cluster[i] <- ifelse(length(match_index) > 0, team_db$clusters[match_index][1], NA)
+  
+  # Identify the away team cluster
+  match_index <- which(team_db$team_display_name == game_res$away_team[i] & team_db$season == game_res$season[i])
+  away_cluster[i] <- ifelse(length(match_index) > 0, team_db$clusters[match_index][1], NA)
+  
+  # Identify the winning cluster
+  match_index <- which(team_db$team_display_name == game_res$win_team[i] & team_db$season == game_res$season[i])
+  win_cluster[i] <- ifelse(length(match_index) > 0, team_db$clusters[match_index][1], NA)
+}
+
+```
+
+```{r}
+# Create cluster match ups
+cluster_matchups <- expand.grid(1:max(team_db$clusters), 1:max(team_db$clusters))
+# Set column names for match ups
+names(cluster_matchups) <- c("home_cluster", "away_cluster")
+# View cluster match ups
+head(cluster_matchups)
+```
+
+```{r}
+# Create empty vector to store result
+match_up_count <- match_up_wins <- rep(NA, nrow(cluster_matchups))
+
+```
+
+```{r}
+# For each match up
+for(i in 1:nrow(cluster_matchups)){
+  # Count number of matchups
+  match_up_count[i] <- sum(home_cluster == cluster_matchups$home_cluster[i] &
+                            away_cluster == cluster_matchups$away_cluster[i], na.rm = TRUE)
+  
+  # Count number of wins
+  match_up_wins[i] <- sum(home_cluster == cluster_matchups$home_cluster[i] &
+                            away_cluster == cluster_matchups$away_cluster[i] &
+                            game_res$home_team == game_res$win_team, na.rm = TRUE)
+}
+
+# Create a data frame
+c_res <- cbind.data.frame(cluster_matchups, match_up_count, match_up_wins)
+
+# Handle cases where match_up_count is zero to avoid division errors
+c_res$win_rate <- ifelse(c_res$match_up_count > 0, c_res$match_up_wins / c_res$match_up_count, NA)
+```
+
+```{r}
+c_res <- cbind.data.frame(cluster_matchups, match_up_count, match_up_wins)
+```
+
+```{r}
+c_res$win_rate <- c_res$match_up_wins/c_res$match_up_count
+
+```
+
+```{r}
+#Most sucessful matchups
+head(c_res[order(c_res$win_rate,decreasing = TRUE),])
+```
+
+```{r}
+# Least sucessful matchups
+head(c_res[order(c_res$win_rate,decreasing = FALSE),])
+```
+```{r}
+head(c_res[order(c_res$win_rate,decreasing = TRUE),])
+
+```
+
+```{r}
+# Filter for matchups between (6 vs. 2) and (5 vs. 3)
+filtered_matchups <- c_res %>%
+  filter((home_cluster == 6 & away_cluster == 2) | (home_cluster == 2 & away_cluster == 6) |
+         (home_cluster == 5 & away_cluster == 3) | (home_cluster == 3 & away_cluster == 5)) %>%
+  arrange(desc(win_rate))  # Sort by win rate in descending order
+
+# Display the result
+print(head(filtered_matchups))
+
+
+```
+
+
+# Additional Analysis: Line Graph 
+```{r} 
+# Filter the dataset to include only championship-winning teams
+championship_teams <- team_db_logos_with_eff %>%
+  filter(final_win == 1)
+
+# Create animated plot for championship teams
+g_cluster_champs <- ggplot(
+  data = championship_teams, 
+  aes(
+    x = off_eff, 
+    y = def_eff, 
+    group = team_display_name
+  )
+) +
+  # Optionally, include a faint point layer for context
+  geom_point(alpha = 0.3) +
+  
+  # Place the team logo at each data point
+  geom_image(aes(image = team_logo), size = 0.09, asp = 16 / 9) +
+  
+  # Use a dark theme similar to your original code
+  dark_theme_bw() +
+  
+  # Adjust the theme for a clean look
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    aspect.ratio = 9 / 16,
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold")
+  ) +
+  
+  # Set labels with a dynamic subtitle that shows the current cluster
+  labs(
+    x = "Offensive Efficiency Per Game", 
+    y = "Defensive Efficiency Per Game", 
+    title = "Offensive Efficiency vs Defensive Efficiency (Championship Teams)",
+    subtitle = "NBA Champions - Cluster {closest_state}"
+  ) +
+  
+  # Transition by the 'clusters' column
+  transition_states(
+    clusters,
+    transition_length = 0,
+    state_length = 5
+  )
+
+# To animate and view the result:
+animate(g_cluster_champs)
+```
+
