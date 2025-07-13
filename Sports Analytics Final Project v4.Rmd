@@ -1,6 +1,6 @@
 ---
 title: "Sports_Analytics_Final_Project"
-author: "Jay Vrins"
+author: "Daymine Snow"
 date: "2025-02-13"
 output: html_document
 ---
