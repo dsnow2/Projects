@@ -1,0 +1,243 @@
+---
+title: "SimOps-Project"
+output: html_document
+date: "2024-04-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Library need for Integer Programming
+```{r}
+# We will use the lpSolve package to solve our lp models.
+# The `quietly = TRUE` option will not display the warning messages usually 
+library(lpSolve, quietly = TRUE)
+```
+
+
+## Part I
+Constructing a maximization integer program for quantity of bake goods for 
+Ryan Hall only.
+```{r}
+# Specify the objective function for Ryan Hall model
+ryan_obj_fun <- c(1, 1, 1, 1, 1, 1, 1)
+
+# Set up constrains coefficients
+ryan_lhs_constr <- matrix(c(1.1, .58, .58, 1.42, 2.46, 3.6, 1.42,
+                     rep(0,4),1,0,1,
+                     rep(1,4),0,1,0,
+                     rep(1,7),
+                     1,rep(0,4),-3,0,
+                     rep(0,3), 1, rep(0,3),
+                     0, 1, -1, rep(0,4),
+                     1,rep(0,6),
+                     0,1,rep(0,5),
+                     rep(0,2),1, rep(0,4),
+                     rep(0,3),1,rep(0,3),
+                     rep(0,4),1,rep(0,2),
+                     rep(0,5),1, 0,
+                     rep(0,6),1), ncol = 7, byrow = TRUE)
+
+
+# Set up constraint levels
+ryan_const_RHS <- c(500, 30, 170, 200, 0, 60, 0, 80, rep(20,2), 40, rep(10,2), 20)
+
+#Set up constrain direction
+ryan_const_dir <- c("<=", 
+               rep(">=",4),
+               "<=",
+               "=",
+               rep(">=",7))
+
+ryan_model <- lp(direction = "max",
+                     objective.in = ryan_obj_fun,
+                     const.mat = ryan_lhs_constr,
+                     const.dir = ryan_const_dir,
+                     const.rhs = ryan_const_RHS,
+                     all.int = TRUE)
+# Mix of bake goods product
+ryan_model$solution
+# Chocolate Chip cookies X1 = 80
+# Sugar cookies X2 = 229
+# Snicker doodle cookies X3 = 229
+# Brownies X4 = 40
+# Muffin Gluten Free (GF) X5 = 10
+# Cinnamon rolls X6 = 10
+# Chocolate Chip Cookies GF X7 = 20
+
+# Total quantity made for Ryan Hall
+ryan_model$objval
+# Total = 618
+```
+
+## Part II
+Improve the Model to reduce the overwhelming number of sugar and snicker diddle 
+cookies. 
+```{r}
+
+# Specify the objective function for Ryan Hall improved product mix
+improve_obj_fun <- c(1, 1, 1, 1, 1, 1, 1)
+
+# Set up constrains coefficients
+improve_lhs_constr <- matrix(c(1.1, .58, .58, 1.42, 2.46, 3.6, 1.42,
+                     rep(0,4),1,0,1,
+                     rep(1,4),0,1,0,
+                     rep(1,7),
+                     1,rep(0,4),-3,0,
+                     rep(0,3), 1, rep(0,3),
+                     0, 1, -1, rep(0,4),
+                     1,rep(0,6),
+                     0,1,rep(0,5),
+                     rep(0,2),1, rep(0,4),
+                     rep(0,3),1,rep(0,3),
+                     rep(0,4),1,rep(0,2),
+                     rep(0,5),1, 0,
+                     rep(0,6),1,
+                     -.25,.75,rep(-.25,5)), ncol = 7, byrow = TRUE)
+
+
+# Set up constraint levels
+improve_const_RHS <- c(500, 30, 170, 200, 0, 60, 0, 80, rep(20,2), 40, rep(10,2), 20, 0)
+
+#Set up constrain direction
+improve_const_dir <- c("<=", 
+               rep(">=",4),
+               "<=",
+               "=",
+               rep(">=",7),
+               "<=")
+
+improve_model <- lp(direction = "max",
+                     objective.in = improve_obj_fun,
+                     const.mat = improve_lhs_constr,
+                     const.dir = improve_const_dir,
+                     const.rhs = improve_const_RHS,
+                     all.int = TRUE)
+
+improve_model$solution
+# Chocolate Chip cookies X1 = 181
+# Sugar cookies X2 = 131
+# Snicker doodle cookies X3 = 131
+# Brownies X4 = 42
+# Muffin Gluten Free (GF) X5 = 10
+# Cinnamon rolls X6 = 10
+# Chocolate Chip Cookies GF X7 = 20
+
+# Total quantity made for Ryan Hall with a better mix
+improve_model$objval
+# Total = 525
+```
+
+
+## Part III
+Constructing a maximization integer program for quantity of bake goods 
+for Campus
+```{r}
+# Specify the objective function for all of campus
+campus_obj_fun <- c(1, 1, 1, 1, 1, 1, 1)
+
+# Set up constrains coefficients
+campus_lhs_constr <- matrix(c(1.1, .58, .58, 1.42, 2.46, 3.6, 1.42,
+                     rep(0,4),1,0,1,
+                     rep(1,4),0,1,0,
+                     rep(1,7),
+                     1,rep(0,4),-3,0,
+                     rep(0,3), 1, rep(0,3),
+                     0, 1, -1, rep(0,4),
+                     1,rep(0,6),
+                     0,1,rep(0,5),
+                     rep(0,2),1, rep(0,4),
+                     rep(0,3),1,rep(0,3),
+                     rep(0,4),1,rep(0,2),
+                     rep(0,5),1, 0,
+                     rep(0,6),1), ncol = 7, byrow = TRUE)
+
+
+# Set up constraint levels
+campus_const_RHS <- c(500, 45, 255, 300, 0, 72, 0, 120, rep(30,2), 60, rep(15,2), 30)
+
+#Set up constrain direction
+campus_const_dir <- c("<=", 
+               rep(">=",4),
+               "<=",
+               "=",
+               rep(">=",7))
+
+campus_model <- lp(direction = "max",
+                     objective.in = campus_obj_fun,
+                     const.mat = campus_lhs_constr,
+                     const.dir = campus_const_dir,
+                     const.rhs = campus_const_RHS,
+                     all.int = TRUE)
+
+campus_model$solution
+# Chocolate Chip cookies X1 = 120
+# Sugar cookies X2 = 128
+# Snicker doodle cookies X3 = 128
+# Brownies X4 = 60
+# Muffin Gluten Free (GF) X5 = 15
+# Cinnamon rolls X6 = 15
+# Chocolate Chip Cookies GF X7 = 30
+
+# Total quantity made for Campus
+campus_model$objval
+# Total = 496
+
+```
+
+## Part IV
+Constructing a maximization integer program for quantity of bake goods after 
+inflation causes prices to rise by 18%
+```{r}
+# Specify the objective function for all of campus
+inflation_obj_fun <- c(1, 1, 1, 1, 1, 1, 1)
+
+# Set up constrains coefficients
+inflation_lhs_constr <- matrix(c(1.1*1.18, .58*1.18, .58*1.18, 1.42*1.18, 2.46*1.18, 3.6*1.18, 1.42*1.18,
+                     rep(0,4),1,0,1,
+                     rep(1,4),0,1,0,
+                     rep(1,7),
+                     1,rep(0,4),-3,0,
+                     rep(0,3), 1, rep(0,3),
+                     0, 1, -1, rep(0,4),
+                     1,rep(0,6),
+                     0,1,rep(0,5),
+                     rep(0,2),1, rep(0,4),
+                     rep(0,3),1,rep(0,3),
+                     rep(0,4),1,rep(0,2),
+                     rep(0,5),1, 0,
+                     rep(0,6),1), ncol = 7, byrow = TRUE)
+
+
+# Set up constraint levels
+inflation_const_RHS <- c(500, 45, 255, 300, 0, 72, 0, 120, rep(30,2), 60, rep(15,2), 30)
+
+#Set up constrain direction
+inflation_const_dir <- c("<=", 
+               rep(">=",4),
+               "<=",
+               "=",
+               rep(">=",7))
+
+inflation_model <- lp(direction = "max",
+                     objective.in = inflation_obj_fun,
+                     const.mat = inflation_lhs_constr,
+                     const.dir = inflation_const_dir,
+                     const.rhs = inflation_const_RHS,
+                     all.int = TRUE)
+
+inflation_model$solution
+# Chocolate Chip cookies X1 = 121
+# Sugar cookies X2 = 62
+# Snicker doodle cookies X3 = 62
+# Brownies X4 = 60
+# Muffin Gluten Free (GF) X5 = 15
+# Cinnamon rolls X6 = 15
+# Chocolate Chip Cookies GF X7 = 30
+
+# Total quantity made for Campus after inflation
+inflation_model$objval
+# Total = 365
+```
+
